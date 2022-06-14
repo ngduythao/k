@@ -5,7 +5,7 @@ pragma solidity ^0.8.10;
 interface IStaking {
     function stake(uint256 amount) external;
 
-    function unstake() external;
+    function unstake(uint256 amount) external;
 
     function claimReward() external;
 
@@ -14,10 +14,8 @@ interface IStaking {
     function exit() external;
 
     function totalStakes() external view returns (uint256);
-
-    function currentTotalRewards() external view returns (uint256);
     
-    function getVault(address account) external view returns (uint256);
+    function getUserInfo(address account) external view returns (uint256, uint256, uint256, uint256);
 
     function earned(address account) external view returns (uint256);
 
@@ -26,4 +24,6 @@ interface IStaking {
     function rewardPerToken() external view returns (uint256);
 
     function getApr() external view returns(uint256);
+
+    function getRemainingReward() external view returns(uint256);
 }
