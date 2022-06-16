@@ -14,10 +14,12 @@ import "./interfaces/IRouter.sol";
 import "./admin/RewardsAdministrator.sol";
 
 contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausable {
-    event OpenCampaign(uint256 periodStart, uint256 periodFinish, uint256 rewardAmount);
+    event RewardAdded(uint256 rewardAmount);
+    event RewardsDurationUpdated(uint256 rewardsDuration);
     event Staked(address indexed user, uint256 amount);
     event Unstake(address indexed user, uint256 amount);
     event ClaimReward(address indexed user, uint256 reward);
+    event CompoundInterest(address indexed user, uint256 amount);
     event UpdateUnstakeDuration(uint256 newDuration);
 
     using SafeMath for uint256;
@@ -32,7 +34,7 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
 
     mapping(address => User) private _users;
 
-    uint256 public constant SECONDS_PER_YEAR = 31536000; // ((24 x 60 x 60) x 365)
+    uint256 public constant SECONDS_PER_YEAR = 31536000; // 365 * 24 x 60 x 60
     uint256 public constant MIN_STAKE_DAYS = 7;
     uint256 public constant PERCENT_DECIMALS = 6;
     address public constant ROUTER_ADDRESS = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
@@ -41,9 +43,9 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
     IERC20 public immutable rewardsToken;
     address public immutable tokenOut;
     
-    uint256 public periodStart = 0;
     uint256 public periodFinish = 0;
     uint256 public rewardAmount = 0;
+    uint256 public rewardsDuration = 30 days;
     uint256 public rewardRate = 0;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenGlobal;
@@ -77,10 +79,9 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
     }
 
     function rewardPerToken() public view override returns (uint256) {
-        if (_totalStakes == 0 || periodStart == 0) return rewardPerTokenGlobal;
-        uint256 sTime = lastUpdateTime < periodStart ? periodStart : lastUpdateTime;
+        if (_totalStakes == 0) return rewardPerTokenGlobal;
+        uint256 sTime = lastUpdateTime;
         uint256 eTime = lastUpdated();
-        if (eTime < sTime) return rewardPerTokenGlobal;
         return 
             rewardPerTokenGlobal
             .add(eTime.sub(sTime).mul(rewardRate).mul(1e18).div(_totalStakes));
@@ -156,7 +157,7 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
         if (user.stakingTime == 0) user.stakingTime = block.timestamp;
     }
 
-    function unstake(uint256 amount) public override nonReentrant updateReward(msg.sender) {
+    function _unstake(uint256 amount) internal {
         require(amount > 0, "Stake: Cannot unstake 0");
         _totalStakes = _totalStakes.sub(amount);
         User storage user = _users[msg.sender];
@@ -186,41 +187,41 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
             _stake(reward);
             rewardsToken.safeTransferFrom(rewardsTreasury, address(this), reward);
         }
+        emit CompoundInterest(msg.sender, reward);
     }
 
-    function calculateFee(uint256 timestamp) internal view returns (uint256) {
-        uint256 stakedDays = (timestamp - block.timestamp).div(86400);
+    function calculateFee(uint256 timestamp) public view returns (uint256) {
+        uint256 stakedDays = (block.timestamp - timestamp).div(86400);
         if (stakedDays >= MIN_STAKE_DAYS) return 0;
         return MIN_STAKE_DAYS.sub(stakedDays);
     }
 
-    function exit() external override nonReentrant {
-        unstake(_users[msg.sender].balance);
+    function exit() external override nonReentrant updateReward(msg.sender) {
+        _unstake(_users[msg.sender].balance);
         claimReward();
     }
 
-    function openCampaign(uint256 _periodStart, uint256 _periodFinish, uint256 _rewardAmount) external override onlyRewardsAdministrator updateReward(address(0)) {
-        require((_periodStart >= block.timestamp || (_periodStart == periodStart && _rewardAmount == rewardAmount)) && _periodFinish > _periodStart, "Stake: Invalid time!");
-        
-        uint256 rewardsDuration;
-
-        // not start yet, or already finished
-        if(periodStart > block.timestamp || periodFinish <= block.timestamp) {
-            rewardsDuration = _periodFinish.sub(_periodStart);
-            periodStart = _periodStart;
-            periodFinish = _periodFinish;
-            rewardAmount = _rewardAmount;
-            rewardRate = _rewardAmount.div(rewardsDuration);
+    function addRewards(uint256 rewardsAmount) external override onlyRewardsAdministrator updateReward(address(0)) {
+        if (block.timestamp >= periodFinish) {
+            rewardRate = rewardsAmount.div(rewardsDuration);
         } else {
-            rewardsDuration = _periodFinish.sub(block.timestamp);
             uint256 remaining = periodFinish.sub(block.timestamp);
             uint256 leftover = remaining.mul(rewardRate);
-            rewardRate = _rewardAmount.add(leftover).div(rewardsDuration);
-            periodFinish = _periodFinish;
+            rewardRate = rewardsAmount.add(leftover).div(rewardsDuration);
         }
 
         lastUpdateTime = block.timestamp;
-        emit OpenCampaign(_periodStart, _periodFinish, _rewardAmount);
+        periodFinish = block.timestamp.add(rewardsDuration);
+        emit RewardAdded(rewardsAmount);
+    }
+
+    function setRewardsDuration(uint256 _rewardsDuration) external onlyRewardsAdministrator {
+        require(
+            block.timestamp > periodFinish,
+            "Previous rewards period must be complete before changing the duration for the new period"
+        );
+        rewardsDuration = _rewardsDuration;
+        emit RewardsDurationUpdated(rewardsDuration);
     }
 
     function withdrawReflection() external onlyOwner {

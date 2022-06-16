@@ -10,7 +10,7 @@ abstract contract RewardsAdministrator is Ownable {
     address public rewardsAdministrator;
     address public rewardsTreasury;
 
-    function openCampaign(uint256 periodStart, uint256 periodFinish, uint256 rewardsAmount) external virtual;
+    function addRewards(uint256 rewardsAmount) external virtual;
     
     modifier onlyRewardsAdministrator() {
         require(msg.sender == rewardsAdministrator, "Administrator: Caller is not an administrator");
