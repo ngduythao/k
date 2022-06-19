@@ -37,12 +37,12 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
     uint256 public constant SECONDS_PER_YEAR = 31536000; // 365 * 24 x 60 x 60
     uint256 public constant PERCENT_DECIMALS = 6;
     uint256 public constant MAX_PENALTY_STAKE_DAYS = 7;
-    address public constant ROUTER_ADDRESS = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
 
     IERC20 public immutable stakingToken;
     IERC20 public immutable rewardsToken;
     address public immutable tokenOut;
     
+    address public routerAddress = 0xCc7aDc94F3D80127849D2b41b6439b7CF1eB4Ae0;
     uint256 public minStake = 2000000 ether;
     uint256 public minStakeDays = 7;
     uint256 public periodFinish = 0;
@@ -121,7 +121,7 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
         address[] memory path = new address[](2);
         path[0] = address(stakingToken);
         path[1] = tokenOut;
-        return IRouter(ROUTER_ADDRESS).getAmountsOut(1e18, path)[1];
+        return IRouter(routerAddress).getAmountsOut(1e18, path)[1];
     }
 
     function getUserInfo(address account) external view override returns (uint256, uint256, uint256, uint256) {
@@ -239,10 +239,14 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
         stakingToken.safeTransferFrom(address(this), msg.sender, balance.sub(_totalStakes));
     }
 
-
     function setFeeBeneficiary(address _feeBeneficiary) external onlyOwner {
         feeBeneficiary = _feeBeneficiary;
     }
+
+    function setRouterAddress(address _routerAddress) external onlyOwner {
+        routerAddress = _routerAddress;
+    }
+
     function setMinStake(uint256 _minStake) external onlyOwner {
         minStake = _minStake;
     }
