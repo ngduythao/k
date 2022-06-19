@@ -5,7 +5,7 @@ pragma solidity ^0.8.10;
 interface IStaking {
     function stake(uint256 amount) external;
 
-    // function unstake(uint256 amount) external;
+    function unstake() external;
 
     function claimReward() external;
 

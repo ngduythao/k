@@ -35,16 +35,18 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
     mapping(address => User) private _users;
 
     uint256 public constant SECONDS_PER_YEAR = 31536000; // 365 * 24 x 60 x 60
-    uint256 public constant MIN_STAKE_DAYS = 7;
     uint256 public constant PERCENT_DECIMALS = 6;
+    uint256 public constant MAX_PENALTY_STAKE_DAYS = 7;
     address public constant ROUTER_ADDRESS = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
 
     IERC20 public immutable stakingToken;
     IERC20 public immutable rewardsToken;
     address public immutable tokenOut;
     
+    uint256 public minStake = 2000000 ether;
+    uint256 public minStakeDays = 7;
     uint256 public periodFinish = 0;
-    uint256 public rewardAmount = 0;
+    uint256 public dailyRewards = 0;
     uint256 public rewardsDuration = 30 days;
     uint256 public rewardRate = 0;
     uint256 public lastUpdateTime;
@@ -143,10 +145,16 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
             .add(_users[account].rewards);
     }
 
+    function dailyProfit(address account) public view returns (uint256) {
+        return 
+            _users[account].balance.mul(dailyRewards).div(_totalStakes);
+    }
+
     function stake(uint256 amount) external override nonReentrant whenNotPaused updateReward(msg.sender) {
         require(amount > 0, "Stake: Cannot stake 0");
         _stake(amount);
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
+        require(_users[msg.sender].balance > minStake, "Stake: Must be greater than min stake");
         emit Staked(msg.sender, amount);
     }
 
@@ -157,14 +165,14 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
         if (user.stakingTime == 0) user.stakingTime = block.timestamp;
     }
 
-    function _unstake(uint256 amount) internal {
-        require(amount > 0, "Stake: Cannot unstake 0");
-        _totalStakes = _totalStakes.sub(amount);
+    function unstake() public override nonReentrant updateReward(msg.sender) {
         User storage user = _users[msg.sender];
-        user.balance = user.balance.sub(amount);
+        uint256 amount = user.balance;
+        _totalStakes = _totalStakes.sub(amount);
+        user.balance = 0;
         uint256 penaltyFee = calculateFee(user.stakingTime);
         uint256 feeAmount = amount.mul(penaltyFee).div(100);
-        stakingToken.safeTransfer(feeBeneficiary, feeAmount);
+        if (feeAmount > 0) stakingToken.safeTransfer(feeBeneficiary, feeAmount);
         stakingToken.safeTransfer(msg.sender, amount.sub(feeAmount));
         if (user.balance == 0) user.stakingTime = 0;
         emit Unstake(msg.sender, amount);
@@ -192,26 +200,28 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
 
     function calculateFee(uint256 timestamp) public view returns (uint256) {
         uint256 stakedDays = (block.timestamp - timestamp).div(86400);
-        if (stakedDays >= MIN_STAKE_DAYS) return 0;
-        return MIN_STAKE_DAYS.sub(stakedDays);
+        if (stakedDays >= minStakeDays) return 0;
+        return minStakeDays.sub(stakedDays);
     }
 
-    function exit() external override nonReentrant updateReward(msg.sender) {
-        _unstake(_users[msg.sender].balance);
+    function exit() external {
         claimReward();
+        unstake();
     }
 
     function addRewards(uint256 rewardsAmount) external override onlyRewardsAdministrator updateReward(address(0)) {
         if (block.timestamp >= periodFinish) {
             rewardRate = rewardsAmount.div(rewardsDuration);
+            periodFinish = block.timestamp.add(rewardsDuration);
         } else {
             uint256 remaining = periodFinish.sub(block.timestamp);
             uint256 leftover = remaining.mul(rewardRate);
             rewardRate = rewardsAmount.add(leftover).div(rewardsDuration);
         }
 
+        dailyRewards = rewardRate.mul(1 days);
         lastUpdateTime = block.timestamp;
-        periodFinish = block.timestamp.add(rewardsDuration);
+        // periodFinish = block.timestamp.add(rewardsDuration);
         emit RewardAdded(rewardsAmount);
     }
 
@@ -227,5 +237,18 @@ contract TestStaking is IStaking, RewardsAdministrator, ReentrancyGuard, Pausabl
     function withdrawReflection() external onlyOwner {
         uint256 balance = stakingToken.balanceOf(address(this));
         stakingToken.safeTransferFrom(address(this), msg.sender, balance.sub(_totalStakes));
+    }
+
+
+    function setFeeBeneficiary(address _feeBeneficiary) external onlyOwner {
+        feeBeneficiary = _feeBeneficiary;
+    }
+    function setMinStake(uint256 _minStake) external onlyOwner {
+        minStake = _minStake;
+    }
+
+    function setMinStakeDays(uint256 _minStakeDays) external onlyOwner {
+        require(_minStakeDays <= MAX_PENALTY_STAKE_DAYS, "Stake: Penalty day are too long");
+        minStakeDays = _minStakeDays;
     }
 }
